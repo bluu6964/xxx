@@ -217,8 +217,8 @@ fun TimelineArea(viewModel: com.example.viewmodel.EditorViewModel) {
                                 onClick = { viewModel.selectedLayer = layerId }
                             )
                         }
-                        viewModel.addedTexts.forEachIndexed { index, _ ->
-                            val layerId = "Text ${index + 1}"
+                        viewModel.addedTexts.forEachIndexed { index, textId ->
+                            val layerId = textId.ifBlank { "Text ${index + 1}" }
                             TrackRow(
                                 icon = { Icon(Icons.Default.TextFields, null, tint = Color.White, modifier = Modifier.size(12.dp)) },
                                 stripColor = Color(0xFF6B8AFF),

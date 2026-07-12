@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -182,9 +183,9 @@ fun BlendThumbnailCanvas(mode: String) {
         // Suspension cables
         val cablePath = Path().apply {
             moveTo(0f, h * 0.48f)
-            quadraticBezierTo(w * 0.1f, h * 0.58f, w * 0.29f, h * 0.34f)
-            quadraticBezierTo(w * 0.5f, h * 0.66f, w * 0.71f, h * 0.34f)
-            quadraticBezierTo(w * 0.9f, h * 0.58f, w, h * 0.48f)
+            quadraticTo(w * 0.1f, h * 0.58f, w * 0.29f, h * 0.34f)
+            quadraticTo(w * 0.5f, h * 0.66f, w * 0.71f, h * 0.34f)
+            quadraticTo(w * 0.9f, h * 0.58f, w, h * 0.48f)
         }
         drawPath(cablePath, silhouetteColor, style = Stroke(width = 1.5f))
         
@@ -377,7 +378,7 @@ fun BlendingOpacityMenu(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (category.title != "Normal") {
                                     Icon(
-                                        imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.Default.ArrowRight,
+                                        imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowRight,
                                         contentDescription = null,
                                         tint = Color.White.copy(alpha = 0.7f),
                                         modifier = Modifier.size(20.dp)

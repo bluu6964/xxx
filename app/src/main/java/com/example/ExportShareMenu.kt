@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.AppliedEffect
 import kotlinx.coroutines.delay
 
 @Composable
@@ -48,6 +49,10 @@ fun ExportShareMenu(
     layerEndTimes: Map<String, Float> = emptyMap(),
     layerTransforms: Map<String, LayerTransform> = emptyMap(),
     layerKeyframes: Map<String, List<LayerKeyframe>> = emptyMap(),
+    opacityKeyframes: Map<String, List<OpacityKeyframe>> = emptyMap(),
+    layerOpacities: Map<String, Float> = emptyMap(),
+    layerBlendModes: Map<String, String> = emptyMap(),
+    layerEffects: Map<String, List<AppliedEffect>> = emptyMap(),
     previewWidthPx: Float = 1f,
     previewHeightPx: Float = 1f,
     timelineDurationSeconds: Float = 4.0f,
@@ -91,6 +96,10 @@ fun ExportShareMenu(
                     layerEndTimes = layerEndTimes,
                     layerTransforms = layerTransforms,
                     layerKeyframes = layerKeyframes,
+                    opacityKeyframes = opacityKeyframes,
+                    layerOpacities = layerOpacities,
+                    layerBlendModes = layerBlendModes,
+                    layerEffects = layerEffects,
                     previewWidthPx = previewWidthPx,
                     previewHeightPx = previewHeightPx,
                     timelineDurationSeconds = timelineDurationSeconds,

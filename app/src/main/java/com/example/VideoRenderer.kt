@@ -193,7 +193,6 @@ object VideoRenderer {
                             canvas.drawPath(androidPath, paint)
                         }
                         is androidx.compose.ui.graphics.vector.VectorGroup -> drawGroup(child)
-                        else -> {}
                     }
                 }
                 canvas.restore()
@@ -226,6 +225,7 @@ object VideoRenderer {
         layerEndTimes: Map<String, Float> = emptyMap(),
         layerTransforms: Map<String, LayerTransform> = emptyMap(),
         layerKeyframes: Map<String, List<LayerKeyframe>> = emptyMap(),
+        opacityKeyframes: Map<String, List<OpacityKeyframe>> = emptyMap(),
         layerOpacities: Map<String, Float> = emptyMap(),
         layerBlendModes: Map<String, String> = emptyMap(),
         layerEffects: Map<String, List<AppliedEffect>> = emptyMap(),
@@ -345,8 +345,9 @@ object VideoRenderer {
                         } else {
                             val timeSec = frameIndex.toFloat() / fps
                             drawTimelineFrame(canvas, width, height, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
-                            drawMediaLayers(canvas, width, height, timeSec, mediaLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
-                            drawShapeLayers(canvas, width, height, timeSec, shapeLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                            drawMediaLayers(canvas, width, height, timeSec, mediaLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                            drawShapeLayers(canvas, width, height, timeSec, shapeLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                            drawTextLayers(canvas, width, height, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
 
                             val inputBuffer = encoder.getInputBuffer(inputBufferIndex)
                             inputBuffer?.clear()
@@ -539,6 +540,7 @@ object VideoRenderer {
         layerEndTimes: Map<String, Float>,
         layerTransforms: Map<String, LayerTransform>,
         layerKeyframes: Map<String, List<LayerKeyframe>>,
+        opacityKeyframes: Map<String, List<OpacityKeyframe>>,
         layerOpacities: Map<String, Float>,
         layerBlendModes: Map<String, String>,
         previewWidthPx: Float,
@@ -554,7 +556,7 @@ object VideoRenderer {
             if (timeSec < startTime || timeSec > endTime) continue
 
             val transform = getActiveTransform(layerId, timeSec, layerTransforms, layerKeyframes)
-            val opacity = getActiveOpacity(layerId, timeSec, layerOpacities, emptyMap())
+            val opacity = getActiveOpacity(layerId, timeSec, layerOpacities, opacityKeyframes)
             
             val centerX = w / 2f + transform.offsetX * scaleFactor
             val centerY = h / 2f + transform.offsetY * scaleFactor
@@ -583,6 +585,7 @@ object VideoRenderer {
         layerEndTimes: Map<String, Float>,
         layerTransforms: Map<String, LayerTransform>,
         layerKeyframes: Map<String, List<LayerKeyframe>>,
+        opacityKeyframes: Map<String, List<OpacityKeyframe>>,
         layerOpacities: Map<String, Float>,
         layerBlendModes: Map<String, String>,
         previewWidthPx: Float,
@@ -627,7 +630,7 @@ object VideoRenderer {
             if (frameBitmap == null) continue
 
             val transform = getActiveTransform(layer.layerId, timeSec, layerTransforms, layerKeyframes)
-            val opacity = getActiveOpacity(layer.layerId, timeSec, layerOpacities, emptyMap())
+            val opacity = getActiveOpacity(layer.layerId, timeSec, layerOpacities, opacityKeyframes)
 
             // Allow media layers to fill the full canvas (was capped at 60%,
             // which caused preview-vs-export mismatch when a layer was dragged
@@ -796,60 +799,82 @@ object VideoRenderer {
         layerEndTimes: Map<String, Float>,
         layerTransforms: Map<String, LayerTransform>,
         layerKeyframes: Map<String, List<LayerKeyframe>>,
+        opacityKeyframes: Map<String, List<OpacityKeyframe>>,
         layerOpacities: Map<String, Float>,
         layerBlendModes: Map<String, String>,
         previewWidthPx: Float,
         previewHeightPx: Float
     ) {
-        val scaleX = w.toFloat() / previewWidthPx
-        val scaleY = h.toFloat() / previewHeightPx
+        val safePreviewWidth = previewWidthPx.takeIf { it > 0f } ?: w.toFloat()
+        val safePreviewHeight = previewHeightPx.takeIf { it > 0f } ?: h.toFloat()
+        val scaleX = w.toFloat() / safePreviewWidth
+        val scaleY = h.toFloat() / safePreviewHeight
+        val textSizeScale = minOf(scaleX, scaleY)
         val cx = w / 2f
         val cy = h / 2f
 
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-        paint.textAlign = android.graphics.Paint.Align.CENTER
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = android.graphics.Paint.Align.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
         
-        addedTexts.forEachIndexed { i, layerId ->
+        addedTexts.forEachIndexed { i, storedLayerId ->
+            val layerId = storedLayerId.ifBlank { "Text ${i + 1}" }
             if (deletedLayers.contains(layerId) || hiddenLayers.contains(layerId)) return@forEachIndexed
             val start = layerStartTimes[layerId] ?: 0f
             val end = layerEndTimes[layerId] ?: Float.MAX_VALUE
             if (timeSec < start || timeSec > end) return@forEachIndexed
             
-            val textContent = layerTexts[layerId] ?: "Text"
-            val shapeColor = layerColors[layerId] ?: androidx.compose.ui.graphics.Color.White
+            val textContent = layerTexts[layerId]?.ifBlank { "New Text" } ?: "New Text"
+            val textColor = layerColors[layerId] ?: androidx.compose.ui.graphics.Color(0xFF16B996)
 
             val transform = getActiveTransform(layerId, timeSec, layerTransforms, layerKeyframes)
-            // base offset
-            val baseOffsetX = (i * 20f - 40f) * 3f // approximate density to px multiplier
+            // Preview offsets are authored in dp; export has no runtime Density, so
+            // use the same 3px-per-dp approximation already used by the original
+            // text exporter and then scale to the target video dimensions.
+            val baseOffsetX = (i * 20f - 40f) * 3f
             val baseOffsetY = (i * 20f - 40f) * 3f
             
-            val totalScale = transform.scaleX * Math.min(scaleX, scaleY)
-            
             paint.color = android.graphics.Color.argb(
-                255,
-                (shapeColor.red * 255).toInt(),
-                (shapeColor.green * 255).toInt(),
-                (shapeColor.blue * 255).toInt()
+                (textColor.alpha * 255).toInt().coerceIn(0, 255),
+                (textColor.red * 255).toInt().coerceIn(0, 255),
+                (textColor.green * 255).toInt().coerceIn(0, 255),
+                (textColor.blue * 255).toInt().coerceIn(0, 255)
             )
-            paint.textSize = 24f * 3f * totalScale
+            paint.textSize = 24f * 3f * textSizeScale
             
-            // opacity
-            val op = getActiveOpacity(layerId, timeSec, layerOpacities, emptyMap())
-            paint.alpha = (op * 255).toInt()
+            val opacity = getActiveOpacity(layerId, timeSec, layerOpacities, opacityKeyframes)
+            paint.alpha = (opacity * textColor.alpha * 255).toInt().coerceIn(0, 255)
             
             val blendMode = layerBlendModes[layerId] ?: "Normal"
-            paint.blendMode = when (blendMode) {
-                "Multiply" -> android.graphics.BlendMode.MULTIPLY
-                "Screen" -> android.graphics.BlendMode.SCREEN
-                "Overlay" -> android.graphics.BlendMode.OVERLAY
-                else -> android.graphics.BlendMode.SRC_OVER
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                paint.blendMode = when (blendMode) {
+                    "Multiply" -> android.graphics.BlendMode.MULTIPLY
+                    "Screen" -> android.graphics.BlendMode.SCREEN
+                    "Overlay" -> android.graphics.BlendMode.OVERLAY
+                    else -> android.graphics.BlendMode.SRC_OVER
+                }
+                paint.xfermode = null
+            } else {
+                paint.xfermode = when (blendMode) {
+                    "Multiply" -> android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.MULTIPLY)
+                    "Screen" -> android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SCREEN)
+                    "Overlay" -> android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.OVERLAY)
+                    else -> null
+                }
             }
             
             canvas.save()
             canvas.translate(cx + (baseOffsetX + transform.offsetX) * scaleX, cy + (baseOffsetY + transform.offsetY) * scaleY)
             canvas.rotate(transform.rotation)
+            canvas.scale(transform.scaleX, transform.scaleY)
             
-            canvas.drawText(textContent, 0f, paint.textSize / 3f, paint)
+            val lines = textContent.split('\n')
+            val lineHeight = paint.fontSpacing
+            val firstBaseline = -((lines.size - 1) * lineHeight) / 2f - (paint.ascent() + paint.descent()) / 2f
+            lines.forEachIndexed { lineIndex, line ->
+                canvas.drawText(line.ifEmpty { " " }, 0f, firstBaseline + lineIndex * lineHeight, paint)
+            }
             canvas.restore()
         }
     }

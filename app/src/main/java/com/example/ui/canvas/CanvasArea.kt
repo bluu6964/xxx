@@ -67,7 +67,6 @@ import android.widget.Toast
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.ui.theme.*
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.unit.Dp
 
@@ -146,6 +145,9 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                     .pointerInput(
                         viewModel.addedShapes.toList(),
                         viewModel.addedMedia.toList(),
+                        viewModel.addedTexts.toList(),
+                        viewModel.hiddenLayers.toSet(),
+                        viewModel.layerTexts.toMap(),
                         viewModel.layerTransforms,
                         viewModel.layerKeyframes,
                         viewModel.playheadProgress,
@@ -164,6 +166,8 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                                 addedShapes = viewModel.addedShapes,
                                 addedMedia = viewModel.addedMedia,
                                 addedTexts = viewModel.addedTexts,
+                                layerTexts = viewModel.layerTexts,
+                                hiddenLayers = viewModel.hiddenLayers.toSet(),
                                 layerTransforms = viewModel.layerTransforms,
                                 layerKeyframes = viewModel.layerKeyframes,
                                 playheadProgress = viewModel.playheadProgress,
@@ -187,77 +191,6 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
             ) {
                // (Removed hardcoded demo layers: Triangle 1, image, Circle 1, Callout 1 preview rendering.
                // Real layers now render below via addedShapes/addedMedia.forEachIndexed.)
-                viewModel.addedTexts.forEachIndexed { index, textId ->
-                    val layerId = "Text ${index + 1}"
-                    val textContent = viewModel.layerTexts[layerId] ?: "Text"
-                    val shapeStartTime = viewModel.layerStartTimes[layerId] ?: 0f
-                    val shapeEndTime = viewModel.layerEndTimes[layerId] ?: Float.MAX_VALUE
-                    if (!viewModel.deletedLayers.contains(layerId) && !viewModel.hiddenLayers.contains(layerId) && viewModel.playheadProgress >= shapeStartTime && viewModel.playheadProgress <= shapeEndTime) {
-                        val shapeColor = viewModel.layerColors[layerId] ?: Color(0xFF16B996)
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .graphicsLayer {
-                                    val transform = getActiveTransform(layerId, viewModel.playheadProgress, viewModel.layerTransforms, viewModel.layerKeyframes)
-                                    val baseOffsetX = with(density) { (index * 20 - 40).dp.toPx() }
-                                    val baseOffsetY = with(density) { (index * 20 - 40).dp.toPx() }
-                                    translationX = baseOffsetX + transform.offsetX
-                                    translationY = baseOffsetY + transform.offsetY
-                                    rotationZ = transform.rotation
-                                    scaleX = transform.scaleX
-                                    scaleY = transform.scaleY
-                                    
-                                    val opacity = getActiveOpacity(layerId, viewModel.playheadProgress, viewModel.layerOpacities, viewModel.opacityKeyframes)
-                                    alpha = opacity
-                                }
-                                .motionStudioLayerBlend(layerId, viewModel.layerOpacities + (layerId to getActiveOpacity(layerId, viewModel.playheadProgress, viewModel.layerOpacities, viewModel.opacityKeyframes)), viewModel.layerBlendModes)
-                                .motionStudioEffects(layerId, viewModel.layerEffects)
-                                .layerTransformGestures(
-                                    layerId = layerId,
-                                    isSelected = viewModel.selectedLayer == layerId,
-                                    onSelect = { viewModel.selectedLayer = layerId },
-                                    transform = getActiveTransform(layerId, viewModel.playheadProgress, viewModel.layerTransforms, viewModel.layerKeyframes),
-                                    onTransformChange = { updateLayerTransform(layerId, it, viewModel.playheadProgress, viewModel.layerTransforms, viewModel.layerKeyframes) },
-                                    onGestureStart = { viewModel.pushUndo() }
-                                )
-                        ) {
-                            var isEditing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-                            if (isEditing && viewModel.selectedLayer == layerId) {
-                                androidx.compose.material3.TextField(
-                                    value = textContent,
-                                    onValueChange = { viewModel.layerTexts[layerId] = it },
-                                    textStyle = androidx.compose.ui.text.TextStyle(color = shapeColor, fontSize = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
-                                    colors = androidx.compose.material3.TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        focusedIndicatorColor = Color.Transparent,
-                                        unfocusedIndicatorColor = Color.Transparent
-                                    ),
-                                    modifier = Modifier.padding(16.dp)
-                                )
-                            } else {
-                                Text(
-                                    text = textContent,
-                                    color = shapeColor,
-                                    fontSize = 24.sp,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    modifier = Modifier.padding(16.dp).pointerInput(Unit) {
-                                        detectTapGestures(
-                                            onDoubleTap = {
-                                                isEditing = true
-                                                viewModel.selectedLayer = layerId
-                                            },
-                                            onTap = {
-                                                isEditing = false
-                                                viewModel.selectedLayer = layerId
-                                            }
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
                 viewModel.addedShapes.forEachIndexed { index, shapeIcon ->
                     val layerId = "Shape ${index + 1}"
                     val shapeStartTime = viewModel.layerStartTimes[layerId] ?: 0f
@@ -397,6 +330,91 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                          }
                      }
                  }
+                viewModel.addedTexts.forEachIndexed { index, textId ->
+                    val layerId = textId.ifBlank { "Text ${index + 1}" }
+                    val textContent = viewModel.layerTexts[layerId] ?: "New Text"
+                    val textStartTime = viewModel.layerStartTimes[layerId] ?: 0f
+                    val textEndTime = viewModel.layerEndTimes[layerId] ?: Float.MAX_VALUE
+                    if (!viewModel.deletedLayers.contains(layerId) && !viewModel.hiddenLayers.contains(layerId) && viewModel.playheadProgress >= textStartTime && viewModel.playheadProgress <= textEndTime) {
+                        val textColor = viewModel.layerColors[layerId] ?: Color(0xFF16B996)
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .graphicsLayer {
+                                    val transform = getActiveTransform(layerId, viewModel.playheadProgress, viewModel.layerTransforms, viewModel.layerKeyframes)
+                                    val baseOffsetX = with(density) { (index * 20 - 40).dp.toPx() }
+                                    val baseOffsetY = with(density) { (index * 20 - 40).dp.toPx() }
+                                    translationX = baseOffsetX + transform.offsetX
+                                    translationY = baseOffsetY + transform.offsetY
+                                    rotationZ = transform.rotation
+                                    scaleX = transform.scaleX
+                                    scaleY = transform.scaleY
+                                }
+                                .motionStudioLayerBlend(layerId, viewModel.layerOpacities + (layerId to getActiveOpacity(layerId, viewModel.playheadProgress, viewModel.layerOpacities, viewModel.opacityKeyframes)), viewModel.layerBlendModes)
+                                .motionStudioEffects(layerId, viewModel.layerEffects)
+                                .layerTransformGestures(
+                                    layerId = layerId,
+                                    isSelected = viewModel.selectedLayer == layerId,
+                                    onSelect = { viewModel.selectedLayer = layerId },
+                                    transform = getActiveTransform(layerId, viewModel.playheadProgress, viewModel.layerTransforms, viewModel.layerKeyframes),
+                                    onTransformChange = { updateLayerTransform(layerId, it, viewModel.playheadProgress, viewModel.layerTransforms, viewModel.layerKeyframes) },
+                                    onGestureStart = { viewModel.pushUndo() }
+                                )
+                        ) {
+                            var isEditing by androidx.compose.runtime.remember(layerId) { androidx.compose.runtime.mutableStateOf(false) }
+                            Box(
+                                modifier = Modifier
+                                    .widthIn(min = 120.dp)
+                                    .heightIn(min = 56.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isEditing && viewModel.selectedLayer == layerId) {
+                                    androidx.compose.material3.TextField(
+                                        value = textContent,
+                                        onValueChange = { viewModel.layerTexts[layerId] = it },
+                                        textStyle = androidx.compose.ui.text.TextStyle(
+                                            color = textColor,
+                                            fontSize = 24.sp,
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                        ),
+                                        colors = androidx.compose.material3.TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent,
+                                            unfocusedIndicatorColor = Color.Transparent
+                                        ),
+                                        modifier = Modifier
+                                            .widthIn(min = 120.dp)
+                                            .padding(8.dp)
+                                    )
+                                } else {
+                                    Text(
+                                        text = textContent,
+                                        color = textColor,
+                                        fontSize = 24.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        modifier = Modifier.padding(16.dp).pointerInput(layerId) {
+                                            detectTapGestures(
+                                                onDoubleTap = {
+                                                    if (!isEditing) viewModel.pushUndo()
+                                                    isEditing = true
+                                                    viewModel.selectedLayer = layerId
+                                                },
+                                                onTap = {
+                                                    isEditing = false
+                                                    viewModel.selectedLayer = layerId
+                                                }
+                                            )
+                                        }
+                                    )
+                                }
+                                if (viewModel.selectedLayer == layerId && !isEditing) {
+                                    SelectionHandles()
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         

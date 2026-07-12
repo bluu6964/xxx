@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
@@ -552,10 +554,10 @@ fun SwipePad(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("FINE TUNE:", color = Color.Gray, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 2.dp))
-            PrecisionAdjustButton(Icons.Default.KeyboardArrowLeft) { onDrag(Offset(-1f, 0f)) }
+            PrecisionAdjustButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft) { onDrag(Offset(-1f, 0f)) }
             PrecisionAdjustButton(Icons.Default.KeyboardArrowUp) { onDrag(Offset(0f, -1f)) }
             PrecisionAdjustButton(Icons.Default.KeyboardArrowDown) { onDrag(Offset(0f, 1f)) }
-            PrecisionAdjustButton(Icons.Default.KeyboardArrowRight) { onDrag(Offset(1f, 0f)) }
+            PrecisionAdjustButton(Icons.AutoMirrored.Filled.KeyboardArrowRight) { onDrag(Offset(1f, 0f)) }
             Spacer(Modifier.width(4.dp))
             Box(
                 modifier = Modifier

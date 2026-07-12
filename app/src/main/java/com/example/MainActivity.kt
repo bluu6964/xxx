@@ -365,10 +365,9 @@ fun MotionStudioTimelineEditor() {
                             layerId.startsWith("Text ") -> {
                                 val idx = layerId.removePrefix("Text ").toIntOrNull()?.minus(1)
                                 if (idx != null && idx in viewModel.addedTexts.indices) {
-                                    val textIdStr = viewModel.addedTexts[idx]
                                     val newId = "Text ${viewModel.addedTexts.size + 1}"
                                     viewModel.addedTexts = viewModel.addedTexts + listOf(newId)
-                                    viewModel.layerTexts[newId] = viewModel.layerTexts[layerId] ?: "Text"
+                                    viewModel.layerTexts[newId] = viewModel.layerTexts[layerId] ?: "New Text"
                                     newId
                                 } else null
                             }
@@ -495,11 +494,18 @@ fun MotionStudioTimelineEditor() {
             defaultLayerCount = viewModel.defaultLayerCount,
             addedMedia = viewModel.addedMedia,
             addedShapes = viewModel.addedShapes,
+            addedTexts = viewModel.addedTexts,
+            layerTexts = viewModel.layerTexts.toMap(),
             deletedLayers = viewModel.deletedLayers.toList(),
+            hiddenLayers = viewModel.hiddenLayers.toList(),
             layerStartTimes = viewModel.layerStartTimes,
             layerEndTimes = viewModel.layerEndTimes,
             layerTransforms = viewModel.layerTransforms.toMap(),
             layerKeyframes = viewModel.layerKeyframes.toMap(),
+            opacityKeyframes = viewModel.opacityKeyframes.toMap(),
+            layerOpacities = viewModel.layerOpacities,
+            layerBlendModes = viewModel.layerBlendModes,
+            layerEffects = viewModel.layerEffects,
             previewWidthPx = viewModel.previewWidthPx,
             previewHeightPx = viewModel.previewHeightPx,
             timelineDurationSeconds = viewModel.timelineDurationSeconds,

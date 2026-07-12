@@ -170,7 +170,7 @@ fun AddElementsMenu(
             Spacer(Modifier.height(16.dp))
             ActionItem("Vector\nDrawing", Icons.Default.InvertColors, onClick = onVectorDrawingClick)
             Spacer(Modifier.height(16.dp))
-            ActionItem("Text", Icons.Default.TextFields)
+            ActionItem("Text", Icons.Default.TextFields, onClick = onAddText)
             Spacer(Modifier.weight(1f))
             Icon(
                 Icons.Default.Close, 
@@ -563,6 +563,8 @@ fun findHitLayer(
     addedShapes: List<ImageVector?>,
     addedMedia: List<Uri>,
     addedTexts: List<String> = emptyList(),
+    layerTexts: Map<String, String> = emptyMap(),
+    hiddenLayers: Set<String> = emptySet(),
     layerTransforms: Map<String, LayerTransform>,
     layerKeyframes: Map<String, List<LayerKeyframe>>,
     playheadProgress: Float,
@@ -574,12 +576,11 @@ fun findHitLayer(
     val centerX = canvasWidthPx / 2f
     val centerY = canvasHeightPx / 2f
 
-    // Media layers are rendered after shape layers, so they're visually on top.
-
-    // Check Texts
+    // Text layers are rendered last in the preview, so check them first for top-most hit selection.
     for (i in addedTexts.indices.reversed()) {
-        val layerId = "Text ${i + 1}"
-        if (layerId in deletedLayers) continue
+        val fallbackLayerId = "Text ${i + 1}"
+        val layerId = addedTexts[i].ifBlank { fallbackLayerId }
+        if (layerId in deletedLayers || layerId in hiddenLayers) continue
         val start = layerStartTimes[layerId] ?: 0f
         val end = layerEndTimes[layerId] ?: Float.MAX_VALUE
         if (playheadProgress < start || playheadProgress > end) continue
@@ -588,27 +589,28 @@ fun findHitLayer(
         val baseOffsetX = with(density) { (i * 20f - 40f).dp.toPx() }
         val baseOffsetY = with(density) { (i * 20f - 40f).dp.toPx() }
         
-        // Approx text size
-        val w = with(density) { 100.dp.toPx() } * transform.scaleX
-        val h = with(density) { 40.dp.toPx() } * transform.scaleX
-        
-        val localX = tapOffset.x - (centerX + baseOffsetX + transform.offsetX)
-        val localY = tapOffset.y - (centerY + baseOffsetY + transform.offsetY)
-        
-        val cos = kotlin.math.cos((-transform.rotation * kotlin.math.PI / 180.0)).toFloat()
-        val sin = kotlin.math.sin((-transform.rotation * kotlin.math.PI / 180.0)).toFloat()
-        val rx = localX * cos - localY * sin
-        val ry = localX * sin + localY * cos
-        
-        if (rx >= -w/2 && rx <= w/2 && ry >= -h/2 && ry <= h/2) {
+        // Approximate the laid-out Compose Text/TextField bounds: 24sp bold text
+        // plus 16dp horizontal padding and a minimum selectable box. This keeps
+        // tap-selection reliable for short, long, and multi-line text layers.
+        val text = layerTexts[layerId].orEmpty().ifEmpty { "New Text" }
+        val longestLineLength = text.lineSequence().maxOfOrNull { it.length } ?: 0
+        val lineCount = text.lineSequence().count().coerceAtLeast(1)
+        val minWidthPx = with(density) { 120.dp.toPx() }
+        val minHeightPx = with(density) { 56.dp.toPx() }
+        val estimatedWidthPx = with(density) { (longestLineLength * 14).dp.toPx() + 32.dp.toPx() }
+        val estimatedHeightPx = with(density) { (lineCount * 32).dp.toPx() + 24.dp.toPx() }
+        val baseWidthPx = maxOf(minWidthPx, estimatedWidthPx)
+        val baseHeightPx = maxOf(minHeightPx, estimatedHeightPx)
+
+        if (isPointInVisualBounds(tapOffset, centerX, centerY, baseOffsetX, baseOffsetY, transform, baseWidthPx, baseHeightPx)) {
             return layerId
         }
     }
 
-    // Check them first (in reverse so the last-added/topmost wins).
+    // Media layers are rendered under text but above shapes (in reverse so the last-added/topmost wins).
     for (i in addedMedia.indices.reversed()) {
         val layerId = "Media ${i + 1}"
-        if (layerId in deletedLayers) continue
+        if (layerId in deletedLayers || layerId in hiddenLayers) continue
         val start = layerStartTimes[layerId] ?: 0f
         val end = layerEndTimes[layerId] ?: Float.MAX_VALUE
         if (playheadProgress < start || playheadProgress > end) continue
@@ -626,7 +628,7 @@ fun findHitLayer(
     // Shape layers
     for (i in addedShapes.indices.reversed()) {
         val layerId = "Shape ${i + 1}"
-        if (layerId in deletedLayers) continue
+        if (layerId in deletedLayers || layerId in hiddenLayers) continue
         val start = layerStartTimes[layerId] ?: 0f
         val end = layerEndTimes[layerId] ?: Float.MAX_VALUE
         if (playheadProgress < start || playheadProgress > end) continue
