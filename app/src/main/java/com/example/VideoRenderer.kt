@@ -33,11 +33,15 @@ object VideoRenderer {
 
     // How close (in microseconds) two export frame timestamps must be to
     // reuse the same decoded video frame instead of seeking again.
-    // ~83ms ≈ one frame at 12fps — video motion is sampled at up to 12fps
-    // even when exporting at 30/60fps, trading a bit of motion smoothness
-    // for a large cut in expensive MediaMetadataRetriever seeks (this was
-    // the main export slowdown: a costly seek+decode on every single frame).
-    private const val VIDEO_FRAME_CACHE_THRESHOLD_US = 83_000L
+    // ~200ms ≈ one frame at 5fps — video motion is sampled at up to 5fps
+    // even when exporting at 30/60fps, trading motion smoothness for a much
+    // larger cut in expensive MediaMetadataRetriever seeks, since a
+    // seek+decode via getFrameAtTime is 1-2 orders of magnitude slower than
+    // every other per-frame cost in this pipeline (drawing, YUV conversion,
+    // encoding). Raise this further if export speed still matters more than
+    // motion smoothness for added video layers; lower it if exported video
+    // layers look too choppy.
+    private const val VIDEO_FRAME_CACHE_THRESHOLD_US = 200_000L
 
     // Holds a pre-prepared added-media layer, ready to be drawn into export
     // frames without re-decoding the source file every frame.
