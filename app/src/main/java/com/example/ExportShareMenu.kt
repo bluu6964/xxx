@@ -56,6 +56,7 @@ fun ExportShareMenu(
     previewWidthPx: Float = 1f,
     previewHeightPx: Float = 1f,
     timelineDurationSeconds: Float = 4.0f,
+    playheadProgress: Float = 0f,
     onClose: () -> Unit
 ) {
     var selectedFormat by remember { mutableStateOf("Video") }
@@ -71,7 +72,7 @@ fun ExportShareMenu(
     
     val context = LocalContext.current
     
-    // Render MP4 video or simulate image sequence export
+    // Render MP4 video, single PNG frame, animated GIF or simulate other sequence exports
     LaunchedEffect(isExporting) {
         if (isExporting) {
             exportProgress = 0f
@@ -81,6 +82,71 @@ fun ExportShareMenu(
                     resolution = selectedResolution,
                     aspectRatio = selectedAspectRatio,
                     frameRateStr = selectedFrameRate,
+                    backgroundStr = selectedBackground,
+                    vectorPoints = vectorPoints,
+                    pointModes = pointModes,
+                    layerColors = layerColors,
+                    defaultLayerCount = defaultLayerCount,
+                    addedMedia = addedMedia,
+                    addedShapes = addedShapes,
+                    addedTexts = addedTexts,
+                    layerTexts = layerTexts,
+                    deletedLayers = deletedLayers,
+                    hiddenLayers = hiddenLayers,
+                    layerStartTimes = layerStartTimes,
+                    layerEndTimes = layerEndTimes,
+                    layerTransforms = layerTransforms,
+                    layerKeyframes = layerKeyframes,
+                    opacityKeyframes = opacityKeyframes,
+                    layerOpacities = layerOpacities,
+                    layerBlendModes = layerBlendModes,
+                    layerEffects = layerEffects,
+                    previewWidthPx = previewWidthPx,
+                    previewHeightPx = previewHeightPx,
+                    timelineDurationSeconds = timelineDurationSeconds,
+                    onProgress = { progress ->
+                        exportProgress = progress
+                    }
+                )
+                savedVideoUri = uri
+                savedFilePath = path
+            } else if (selectedFormat == "Current Frame as PNG") {
+                val (uri, path) = VideoRenderer.renderAndSaveSingleFrame(
+                    context = context,
+                    playheadProgress = playheadProgress,
+                    resolution = selectedResolution,
+                    aspectRatio = selectedAspectRatio,
+                    backgroundStr = selectedBackground,
+                    vectorPoints = vectorPoints,
+                    pointModes = pointModes,
+                    layerColors = layerColors,
+                    defaultLayerCount = defaultLayerCount,
+                    addedMedia = addedMedia,
+                    addedShapes = addedShapes,
+                    addedTexts = addedTexts,
+                    layerTexts = layerTexts,
+                    deletedLayers = deletedLayers,
+                    hiddenLayers = hiddenLayers,
+                    layerStartTimes = layerStartTimes,
+                    layerEndTimes = layerEndTimes,
+                    layerTransforms = layerTransforms,
+                    layerKeyframes = layerKeyframes,
+                    opacityKeyframes = opacityKeyframes,
+                    layerOpacities = layerOpacities,
+                    layerBlendModes = layerBlendModes,
+                    layerEffects = layerEffects,
+                    previewWidthPx = previewWidthPx,
+                    previewHeightPx = previewHeightPx,
+                    timelineDurationSeconds = timelineDurationSeconds
+                )
+                savedVideoUri = uri
+                savedFilePath = path
+                exportProgress = 1.0f
+            } else if (selectedFormat == "GIF") {
+                val (uri, path) = VideoRenderer.renderAndSaveGif(
+                    context = context,
+                    resolution = selectedResolution,
+                    aspectRatio = selectedAspectRatio,
                     backgroundStr = selectedBackground,
                     vectorPoints = vectorPoints,
                     pointModes = pointModes,
@@ -580,8 +646,18 @@ fun ExportShareMenu(
                         
                         Spacer(modifier = Modifier.height(16.dp))
                         
+                        val mimeType = when (selectedFormat) {
+                            "Video" -> "video/mp4"
+                            "Current Frame as PNG" -> "image/png"
+                            "GIF" -> "image/gif"
+                            else -> null
+                        }
+
                         Text(
-                            text = if (selectedFormat == "Video") "MP4 Saved to Device!" else "Export Successful!",
+                            text = if (selectedFormat == "Video") "MP4 Saved to Device!" 
+                                   else if (selectedFormat == "Current Frame as PNG") "PNG Saved to Device!"
+                                   else if (selectedFormat == "GIF") "GIF Saved to Device!"
+                                   else "Export Successful!",
                             color = Color.White,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold
@@ -592,6 +668,10 @@ fun ExportShareMenu(
                         Text(
                             text = if (selectedFormat == "Video") {
                                 "Your MP4 video ($selectedResolution) is saved to your device Gallery (Movies/MotionStudio folder)!"
+                            } else if (selectedFormat == "Current Frame as PNG") {
+                                "Your PNG frame image is saved to your device Gallery (Pictures/MotionStudio folder)!"
+                            } else if (selectedFormat == "GIF") {
+                                "Your animated GIF is saved to your device Gallery (Pictures/MotionStudio folder)!"
                             } else {
                                 "Your $selectedFormat is saved successfully and is ready to share."
                             },
@@ -602,15 +682,15 @@ fun ExportShareMenu(
                         
                         Spacer(modifier = Modifier.height(24.dp))
                         
-                        if (selectedFormat == "Video" && savedVideoUri != null) {
+                        if (mimeType != null && savedVideoUri != null) {
                             Button(
                                 onClick = {
                                     try {
                                         val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                            setDataAndType(savedVideoUri, "video/mp4")
+                                            setDataAndType(savedVideoUri, mimeType)
                                             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }
-                                        context.startActivity(android.content.Intent.createChooser(viewIntent, "Open MP4 Video"))
+                                        context.startActivity(android.content.Intent.createChooser(viewIntent, "Open File"))
                                     } catch (e: Exception) {
                                         Toast.makeText(context, "Saved at: $savedFilePath", Toast.LENGTH_LONG).show()
                                     }
@@ -620,9 +700,18 @@ fun ExportShareMenu(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = "Play", modifier = Modifier.size(18.dp), tint = Color(0xFF16B996))
+                                    Icon(
+                                        if (selectedFormat == "Video") Icons.Default.PlayArrow else Icons.Default.RemoveRedEye,
+                                        contentDescription = "Open",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = Color(0xFF16B996)
+                                    )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Play / Open Video", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        if (selectedFormat == "Video") "Play / Open Video" else "Open / View File",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                             Spacer(modifier = Modifier.height(10.dp))
@@ -630,14 +719,14 @@ fun ExportShareMenu(
                         
                         Button(
                             onClick = {
-                                if (selectedFormat == "Video" && savedVideoUri != null) {
+                                if (mimeType != null && savedVideoUri != null) {
                                     try {
                                         val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                            type = "video/mp4"
+                                            type = mimeType
                                             putExtra(android.content.Intent.EXTRA_STREAM, savedVideoUri)
                                             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }
-                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Share MP4 Video"))
+                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Share File"))
                                     } catch (e: Exception) {
                                         Toast.makeText(context, "Shared successfully!", Toast.LENGTH_SHORT).show()
                                     }
@@ -653,7 +742,11 @@ fun ExportShareMenu(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Share Video", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (selectedFormat == "Video") "Share Video" else "Share File",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                         

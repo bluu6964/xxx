@@ -209,6 +209,8 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                                     rotationZ = transform.rotation
                                     scaleX = transform.scaleX
                                     scaleY = transform.scaleY
+                                    clip = true
+                                    shape = RoundedCornerShape(1.dp)
                                 }
                                 .motionStudioLayerBlend(layerId, viewModel.layerOpacities + (layerId to getActiveOpacity(layerId, viewModel.playheadProgress, viewModel.layerOpacities, viewModel.opacityKeyframes)), viewModel.layerBlendModes)
                                 .motionStudioEffects(layerId, viewModel.layerEffects)
@@ -279,7 +281,6 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                                      translationY = baseOffsetY + transform.offsetY
                                      rotationZ = transform.rotation
                                      scaleX = transform.scaleX
-                                    scaleY = transform.scaleY
                                      scaleY = transform.scaleY
                                  }
                                  .motionStudioLayerBlend(layerId, viewModel.layerOpacities + (layerId to getActiveOpacity(layerId, viewModel.playheadProgress, viewModel.layerOpacities, viewModel.opacityKeyframes)), viewModel.layerBlendModes)
@@ -301,7 +302,7 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                                      playheadProgressSeconds = viewModel.playheadProgress,
                                      layerStartSeconds = mediaStartTime,
                                      isPlaying = viewModel.isPlaying,
-                                     modifier = Modifier.size(160.dp),
+                                     modifier = Modifier,
                                      onDurationKnownSeconds = { realDurationSeconds ->
                                          // Only auto-apply the real duration the first time it's
                                          // discovered for this layer. Otherwise, every time the
@@ -321,6 +322,7 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                                      model = uri,
                                      contentDescription = null,
                                      imageLoader = videoAwareImageLoader,
+                                     contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                                      modifier = Modifier.size(160.dp)
                                  )
                              }
@@ -349,6 +351,8 @@ fun CanvasArea(viewModel: com.example.viewmodel.EditorViewModel, modifier: Modif
                                     rotationZ = transform.rotation
                                     scaleX = transform.scaleX
                                     scaleY = transform.scaleY
+                                    clip = true
+                                    shape = RoundedCornerShape(1.dp)
                                 }
                                 .motionStudioLayerBlend(layerId, viewModel.layerOpacities + (layerId to getActiveOpacity(layerId, viewModel.playheadProgress, viewModel.layerOpacities, viewModel.opacityKeyframes)), viewModel.layerBlendModes)
                                 .motionStudioEffects(layerId, viewModel.layerEffects)

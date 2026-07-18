@@ -186,7 +186,11 @@ fun TimelineArea(viewModel: com.example.viewmodel.EditorViewModel) {
             // Content
             if (!viewModel.showAddMenu) {
                 if (viewModel.selectedLayer == null) {
-                    Column(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         // Ruler
                         Box(modifier = Modifier.height(32.dp).fillMaxWidth()) // Ruler space
                         
@@ -697,10 +701,16 @@ fun TimelineArea(viewModel: com.example.viewmodel.EditorViewModel) {
                 
                 // Playhead line
                 drawLine(
-                    Color.White,
+                    Color(0xFF16B996),
                     Offset(playheadX.toPx(), 12.dp.toPx()), 
                     Offset(playheadX.toPx(), size.height),
-                    strokeWidth = 1.5.dp.toPx()
+                    strokeWidth = 2.dp.toPx()
+                )
+                // Draw a nice round playhead cap/head at the top of the line
+                drawCircle(
+                    color = Color(0xFF16B996),
+                    radius = 5.dp.toPx(),
+                    center = Offset(playheadX.toPx(), 12.dp.toPx())
                 )
             }
             
@@ -714,10 +724,10 @@ fun TimelineArea(viewModel: com.example.viewmodel.EditorViewModel) {
             Box(
                 modifier = Modifier
                     .offset(x = playheadX - 35.dp, y = 8.dp)
-                    .background(Color.White, RoundedCornerShape(4.dp))
+                    .background(Color(0xFF16B996), RoundedCornerShape(4.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
-                Text(timeStr, color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                Text(timeStr, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
             }
             
             // Floating Button Add (+)

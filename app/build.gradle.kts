@@ -6,6 +6,7 @@ plugins {
 android {
   namespace = "com.example"
   compileSdk = 35
+  ndkVersion = "27.0.12077973"
 
   defaultConfig {
     applicationId = "com.motionstudio.app"
@@ -15,11 +16,12 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+  }
 
-    // Native rendering engine (C++/OpenGL ES) — see src/main/cpp/.
-    // Only building the two most common device ABIs to start; add
-    // armeabi-v7a / x86_64 here once the native engine is stable, since
-    // each extra ABI multiplies native build + APK size.
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/cpp/CMakeLists.txt")
+    }
   }
 
   signingConfigs {

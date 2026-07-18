@@ -19,6 +19,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import com.example.render.NativeRenderer
+import com.example.render.AnimatedGifEncoder
 import com.example.model.AppliedEffect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -37,7 +38,7 @@ object VideoRenderer {
     // even when exporting at 30/60fps, trading a bit of motion smoothness
     // for a large cut in expensive MediaMetadataRetriever seeks (this was
     // the main export slowdown: a costly seek+decode on every single frame).
-    private const val VIDEO_FRAME_CACHE_THRESHOLD_US = 83_000L
+    private const val VIDEO_FRAME_CACHE_THRESHOLD_US = 5_000L
 
     // Holds a pre-prepared added-media layer, ready to be drawn into export
     // frames without re-decoding the source file every frame.
@@ -52,7 +53,8 @@ object VideoRenderer {
         // together (see VIDEO_FRAME_CACHE_THRESHOLD_US) can reuse it instead
         // of paying for another expensive seek+decode each time.
         var cachedFrameTimeUs: Long = -1L,
-        var cachedFrameBitmap: Bitmap? = null
+        var cachedFrameBitmap: Bitmap? = null,
+        var hardwareDecoder: com.example.render.MediaCodecVideoDecoder? = null
     )
 
     private fun decodeBitmapFromUri(context: Context, uri: Uri): Bitmap? {
@@ -265,6 +267,9 @@ object VideoRenderer {
                     imageBitmap = if (!isVideo) decodeBitmapFromUri(context, uri) else null,
                     videoRetriever = if (isVideo) android.media.MediaMetadataRetriever().apply {
                         try { setDataSource(context, uri) } catch (e: Exception) { Log.e(TAG, "Failed to open video for export", e) }
+                    } else null,
+                    hardwareDecoder = if (isVideo) {
+                        try { com.example.render.MediaCodecVideoDecoder(context, uri, width, height) } catch (e: Exception) { null }
                     } else null
                 )
             }
@@ -344,10 +349,126 @@ object VideoRenderer {
                             isInputDone = true
                         } else {
                             val timeSec = frameIndex.toFloat() / fps
-                            drawTimelineFrame(canvas, width, height, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
-                            drawMediaLayers(canvas, width, height, timeSec, mediaLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
-                            drawShapeLayers(canvas, width, height, timeSec, shapeLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
-                            drawTextLayers(canvas, width, height, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                            val scaleFactor = if (previewWidthPx > 0f) width / previewWidthPx else 1f
+
+                            if (NativeRenderer.isAvailable) {
+                                // 1. Draw Background and Vector Drawings
+                                drawTimelineFrame(canvas, width, height, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
+
+                                // 2. Collect active Media & Shape layers
+                                val nativeLayers = mutableListOf<com.example.render.RenderLayer>()
+
+                                // Collect Media Layers
+                                for (layer in mediaLayers) {
+                                    if (deletedLayers.contains(layer.layerId) || hiddenLayers.contains(layer.layerId)) continue
+                                    val startTime = layerStartTimes[layer.layerId] ?: 0f
+                                    val endTime = layerEndTimes[layer.layerId] ?: Float.MAX_VALUE
+                                    if (timeSec < startTime || timeSec > endTime) continue
+
+                                    val frameBitmap = if (layer.isVideo) {
+                                        val localTimeUs = ((timeSec - startTime).coerceAtLeast(0f) * 1_000_000L).toLong()
+                                        if (layer.cachedFrameBitmap != null && kotlin.math.abs(localTimeUs - layer.cachedFrameTimeUs) < VIDEO_FRAME_CACHE_THRESHOLD_US) {
+                                            layer.cachedFrameBitmap
+                                        } else {
+                                            if (layer.cachedFrameBitmap == null) {
+                                                layer.cachedFrameBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                            }
+                                            val outBmp = layer.cachedFrameBitmap!!
+                                            val decoded = layer.hardwareDecoder?.decodeNextFrame(localTimeUs, outBmp) ?: false
+                                            
+                                            val fresh = if (decoded) {
+                                                outBmp
+                                            } else {
+                                                try {
+                                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                                                        val maxDecodeDim = 1080
+                                                        val sVal = minOf(1.0, maxDecodeDim.toDouble() / maxOf(width, height))
+                                                        val decodeW = (width * sVal).toInt().coerceAtLeast(1)
+                                                        val decodeH = (height * sVal).toInt().coerceAtLeast(1)
+                                                        layer.videoRetriever?.getScaledFrameAtTime(
+                                                            localTimeUs,
+                                                            android.media.MediaMetadataRetriever.OPTION_CLOSEST,
+                                                            decodeW,
+                                                            decodeH
+                                                        )
+                                                    } else {
+                                                        layer.videoRetriever?.getFrameAtTime(localTimeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+                                                    }
+                                                } catch (e: Exception) {
+                                                    null
+                                                }
+                                            }
+                                            if (fresh != null) {
+                                                if (fresh != outBmp) {
+                                                    layer.cachedFrameBitmap?.recycle()
+                                                    layer.cachedFrameBitmap = fresh
+                                                } else {
+                                                    layer.cachedFrameBitmap = outBmp
+                                                }
+                                                layer.cachedFrameTimeUs = localTimeUs
+                                            }
+                                            layer.cachedFrameBitmap
+                                        }
+                                    } else {
+                                        layer.imageBitmap
+                                    }
+                                    if (frameBitmap == null) continue
+
+                                    val transform = getActiveTransform(layer.layerId, timeSec, layerTransforms, layerKeyframes)
+                                    val opacity = getActiveOpacity(layer.layerId, timeSec, layerOpacities, opacityKeyframes)
+
+                                    val maxW = width.toFloat()
+                                    val maxH = height.toFloat()
+                                    val baseScale = minOf(maxW / frameBitmap.width, maxH / frameBitmap.height)
+
+                                    nativeLayers.add(
+                                        com.example.render.RenderLayer(
+                                            bitmap = frameBitmap,
+                                            opacity = opacity,
+                                            offsetX = transform.offsetX * scaleFactor,
+                                            offsetY = transform.offsetY * scaleFactor,
+                                            rotationDegrees = transform.rotation,
+                                            scaleX = transform.scaleX * baseScale,
+                                            scaleY = transform.scaleY * baseScale
+                                        )
+                                    )
+                                }
+
+                                // Collect Shape Layers
+                                for ((layerId, shapeBmp) in shapeLayers) {
+                                    if (deletedLayers.contains(layerId) || hiddenLayers.contains(layerId)) continue
+                                    val startTime = layerStartTimes[layerId] ?: 0f
+                                    val endTime = layerEndTimes[layerId] ?: Float.MAX_VALUE
+                                    if (timeSec < startTime || timeSec > endTime) continue
+
+                                    val transform = getActiveTransform(layerId, timeSec, layerTransforms, layerKeyframes)
+                                    val opacity = getActiveOpacity(layerId, timeSec, layerOpacities, opacityKeyframes)
+
+                                    nativeLayers.add(
+                                        com.example.render.RenderLayer(
+                                            bitmap = shapeBmp,
+                                            opacity = opacity,
+                                            offsetX = transform.offsetX * scaleFactor,
+                                            offsetY = transform.offsetY * scaleFactor,
+                                            rotationDegrees = transform.rotation,
+                                            scaleX = transform.scaleX,
+                                            scaleY = transform.scaleY
+                                        )
+                                    )
+                                }
+
+                                // 3. Composite everything onto the bitmap using the native CPU-multi-threaded engine!
+                                NativeRenderer.compositeFrame(bitmap, nativeLayers)
+
+                                // 4. Draw Text layers on top (using standard Canvas)
+                                drawTextLayers(canvas, width, height, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                            } else {
+                                // Fallback to original sequential CPU Canvas path if native is unavailable
+                                drawTimelineFrame(canvas, width, height, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
+                                drawMediaLayers(canvas, width, height, timeSec, mediaLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                                drawShapeLayers(canvas, width, height, timeSec, shapeLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                                drawTextLayers(canvas, width, height, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                            }
 
                             val inputBuffer = encoder.getInputBuffer(inputBufferIndex)
                             inputBuffer?.clear()
@@ -401,13 +522,35 @@ object VideoRenderer {
             mediaLayers.forEach { layer ->
                 layer.imageBitmap?.recycle()
                 layer.cachedFrameBitmap?.recycle()
+                try { layer.hardwareDecoder?.release() } catch (e: Exception) {}
                 try { layer.videoRetriever?.release() } catch (e: Exception) {}
             }
             shapeLayers.forEach { (_, bitmap) -> bitmap.recycle() }
 
             // Save to MediaStore (Gallery / Movies)
-            val uri = saveVideoToDevice(context, tempFile, resolution)
-            val savedPath = tempFile.absolutePath
+            val firstActiveVideoLayer = mediaLayers.firstOrNull { layer ->
+                layer.isVideo && !deletedLayers.contains(layer.layerId) && !hiddenLayers.contains(layer.layerId)
+            }
+
+            val finalFileToSave = if (firstActiveVideoLayer != null) {
+                val finalMuxedFile = java.io.File(context.cacheDir, "muxed_${System.currentTimeMillis()}.mp4")
+                muxAudioAndVideo(context, tempFile, firstActiveVideoLayer.uri, finalMuxedFile)
+                finalMuxedFile
+            } else {
+                tempFile
+            }
+
+            val uri = saveVideoToDevice(context, finalFileToSave, resolution)
+            val savedPath = finalFileToSave.absolutePath
+
+            // Cleanup temp files
+            try {
+                if (finalFileToSave != tempFile) {
+                    finalFileToSave.delete()
+                }
+                tempFile.delete()
+            } catch (e: Exception) {}
+
             Pair(uri, savedPath)
         } catch (e: Exception) {
             Log.e(TAG, "Video rendering failed", e)
@@ -613,7 +756,20 @@ object VideoRenderer {
                     layer.cachedFrameBitmap
                 } else {
                     val fresh = try {
-                        layer.videoRetriever?.getFrameAtTime(localTimeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            val maxDecodeDim = 1080
+                            val sVal = minOf(1.0, maxDecodeDim.toDouble() / maxOf(w, h))
+                            val decodeW = (w * sVal).toInt().coerceAtLeast(1)
+                            val decodeH = (h * sVal).toInt().coerceAtLeast(1)
+                            layer.videoRetriever?.getScaledFrameAtTime(
+                                localTimeUs,
+                                android.media.MediaMetadataRetriever.OPTION_CLOSEST,
+                                decodeW,
+                                decodeH
+                            )
+                        } else {
+                            layer.videoRetriever?.getFrameAtTime(localTimeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+                        }
                     } catch (e: Exception) {
                         null
                     }
@@ -785,6 +941,128 @@ object VideoRenderer {
             return null
         }
     }
+
+    private fun muxAudioAndVideo(
+        context: Context,
+        videoOnlyFile: File,
+        audioSourceUri: Uri,
+        outputFile: File
+    ) {
+        val videoExtractor = android.media.MediaExtractor()
+        val audioExtractor = android.media.MediaExtractor()
+        var muxer: android.media.MediaMuxer? = null
+
+        try {
+            // Set data sources
+            videoExtractor.setDataSource(videoOnlyFile.absolutePath)
+            try {
+                audioExtractor.setDataSource(context, audioSourceUri, null)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set audio source data source", e)
+                // Fallback: just copy the videoOnlyFile to outputFile
+                videoOnlyFile.copyTo(outputFile, overwrite = true)
+                return
+            }
+
+            // Find tracks
+            var videoTrackIndex = -1
+            var videoFormat: android.media.MediaFormat? = null
+            for (i in 0 until videoExtractor.trackCount) {
+                val format = videoExtractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME)
+                if (mime?.startsWith("video/") == true) {
+                    videoTrackIndex = i
+                    videoFormat = format
+                    break
+                }
+            }
+
+            var audioTrackIndex = -1
+            var audioFormat: android.media.MediaFormat? = null
+            for (i in 0 until audioExtractor.trackCount) {
+                val format = audioExtractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME)
+                if (mime?.startsWith("audio/") == true) {
+                    audioTrackIndex = i
+                    audioFormat = format
+                    break
+                }
+            }
+
+            if (videoTrackIndex == -1) {
+                // No video track found? (Should never happen)
+                videoOnlyFile.copyTo(outputFile, overwrite = true)
+                return
+            }
+
+            if (audioTrackIndex == -1) {
+                // No audio track found in the source video. Just use the video only file!
+                videoOnlyFile.copyTo(outputFile, overwrite = true)
+                return
+            }
+
+            // Initialize Muxer
+            muxer = android.media.MediaMuxer(outputFile.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            
+            // Add tracks to Muxer
+            val newVideoTrackIndex = muxer.addTrack(videoFormat!!)
+            val newAudioTrackIndex = muxer.addTrack(audioFormat!!)
+
+            muxer.start()
+
+            // 1. Copy Video Track
+            videoExtractor.selectTrack(videoTrackIndex)
+            val videoBuffer = java.nio.ByteBuffer.allocate(1024 * 1024)
+            val videoBufferInfo = MediaCodec.BufferInfo()
+            while (true) {
+                videoBufferInfo.offset = 0
+                videoBufferInfo.size = videoExtractor.readSampleData(videoBuffer, 0)
+                if (videoBufferInfo.size < 0) {
+                    break
+                }
+                videoBufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                videoBufferInfo.flags = videoExtractor.sampleFlags
+                muxer.writeSampleData(newVideoTrackIndex, videoBuffer, videoBufferInfo)
+                videoExtractor.advance()
+            }
+
+            // 2. Copy Audio Track
+            audioExtractor.selectTrack(audioTrackIndex)
+            val audioBuffer = java.nio.ByteBuffer.allocate(1024 * 1024)
+            val audioBufferInfo = MediaCodec.BufferInfo()
+            while (true) {
+                audioBufferInfo.offset = 0
+                audioBufferInfo.size = audioExtractor.readSampleData(audioBuffer, 0)
+                if (audioBufferInfo.size < 0) {
+                    break
+                }
+                audioBufferInfo.presentationTimeUs = audioExtractor.sampleTime
+                audioBufferInfo.flags = audioExtractor.sampleFlags
+                muxer.writeSampleData(newAudioTrackIndex, audioBuffer, audioBufferInfo)
+                audioExtractor.advance()
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error while muxing audio and video", e)
+            // Fallback: just copy videoOnlyFile to outputFile
+            try {
+                videoOnlyFile.copyTo(outputFile, overwrite = true)
+            } catch (ex: Exception) {
+                Log.e(TAG, "Failed fallback copy", ex)
+            }
+        } finally {
+            try {
+                videoExtractor.release()
+            } catch (e: Exception) {}
+            try {
+                audioExtractor.release()
+            } catch (e: Exception) {}
+            try {
+                muxer?.stop()
+                muxer?.release()
+            } catch (e: Exception) {}
+        }
+    }
     private fun drawTextLayers(
         canvas: Canvas,
         w: Int,
@@ -876,6 +1154,478 @@ object VideoRenderer {
                 canvas.drawText(line.ifEmpty { " " }, 0f, firstBaseline + lineIndex * lineHeight, paint)
             }
             canvas.restore()
+        }
+    }
+
+    suspend fun renderAndSaveSingleFrame(
+        context: Context,
+        playheadProgress: Float,
+        resolution: String,
+        aspectRatio: String,
+        backgroundStr: String,
+        vectorPoints: List<Offset>,
+        pointModes: List<Boolean>,
+        layerColors: Map<String, Color>,
+        defaultLayerCount: Map<String, Int>,
+        addedMedia: List<Uri> = emptyList(),
+        addedShapes: List<androidx.compose.ui.graphics.vector.ImageVector?> = emptyList(),
+        addedTexts: List<String> = emptyList(),
+        layerTexts: Map<String, String> = emptyMap(),
+        deletedLayers: List<String> = emptyList(),
+        hiddenLayers: List<String> = emptyList(),
+        layerStartTimes: Map<String, Float> = emptyMap(),
+        layerEndTimes: Map<String, Float> = emptyMap(),
+        layerTransforms: Map<String, LayerTransform> = emptyMap(),
+        layerKeyframes: Map<String, List<LayerKeyframe>> = emptyMap(),
+        opacityKeyframes: Map<String, List<OpacityKeyframe>> = emptyMap(),
+        layerOpacities: Map<String, Float> = emptyMap(),
+        layerBlendModes: Map<String, String> = emptyMap(),
+        layerEffects: Map<String, List<AppliedEffect>> = emptyMap(),
+        previewWidthPx: Float = 1f,
+        previewHeightPx: Float = 1f,
+        timelineDurationSeconds: Float = 4.0f
+    ): Pair<Uri?, String?> = withContext(Dispatchers.IO) {
+        try {
+            val (w, h) = when (resolution) {
+                "1440p (QHD)" -> if (aspectRatio == "9:16") Pair(1440, 2560) else Pair(2560, 1440)
+                "1080p (FHD)" -> if (aspectRatio == "9:16") Pair(1080, 1920) else Pair(1920, 1080)
+                "720p (HD)" -> if (aspectRatio == "9:16") Pair(720, 1280) else Pair(1280, 720)
+                "540p (SD)" -> if (aspectRatio == "9:16") Pair(540, 960) else Pair(960, 540)
+                else -> if (aspectRatio == "9:16") Pair(360, 640) else Pair(640, 360)
+            }
+
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+
+            val mediaLayers = addedMedia.mapIndexed { index, uri ->
+                val layerId = "Media ${index + 1}"
+                val mimeType = try { context.contentResolver.getType(uri) } catch (e: Exception) { null }
+                val isVideo = mimeType?.startsWith("video/") == true
+                ExportMediaLayer(
+                    layerId = layerId,
+                    uri = uri,
+                    isVideo = isVideo,
+                    imageBitmap = if (!isVideo) decodeBitmapFromUri(context, uri) else null,
+                    videoRetriever = if (isVideo) android.media.MediaMetadataRetriever().apply {
+                        try { setDataSource(context, uri) } catch (e: Exception) { Log.e("VideoRenderer", "Failed to open video for export", e) }
+                    } else null,
+                    hardwareDecoder = if (isVideo) {
+                        try { com.example.render.MediaCodecVideoDecoder(context, uri, w, h) } catch (e: Exception) { null }
+                    } else null
+                )
+            }
+
+            val shapeSizePx = (minOf(w, h) * 0.3f).toInt().coerceAtLeast(1)
+            val shapeLayers = addedShapes.mapIndexedNotNull { index, icon ->
+                if (icon == null) return@mapIndexedNotNull null
+                val layerId = "Shape ${index + 1}"
+                val tintColor = layerColors[layerId]?.let {
+                    AndroidColor.argb((it.alpha * 255).toInt(), (it.red * 255).toInt(), (it.green * 255).toInt(), (it.blue * 255).toInt())
+                } ?: AndroidColor.rgb(22, 185, 150)
+                val bitmap = renderImageVectorToBitmap(icon, shapeSizePx, tintColor)
+                if (bitmap != null) layerId to bitmap else null
+            }
+
+            val timeSec = playheadProgress * timelineDurationSeconds
+            val scaleFactor = if (previewWidthPx > 0f) w / previewWidthPx else 1f
+
+            if (NativeRenderer.isAvailable) {
+                // 1. Draw Background and Vector Drawings
+                drawTimelineFrame(canvas, w, h, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
+
+                // 2. Collect active Media & Shape layers
+                val nativeLayers = mutableListOf<com.example.render.RenderLayer>()
+
+                // Collect Media Layers
+                for (layer in mediaLayers) {
+                    if (deletedLayers.contains(layer.layerId) || hiddenLayers.contains(layer.layerId)) continue
+                    val startTime = layerStartTimes[layer.layerId] ?: 0f
+                    val endTime = layerEndTimes[layer.layerId] ?: Float.MAX_VALUE
+                    if (timeSec < startTime || timeSec > endTime) continue
+
+                    val frameBitmap = if (layer.isVideo) {
+                        val localTimeUs = ((timeSec - startTime).coerceAtLeast(0f) * 1_000_000L).toLong()
+                        if (layer.cachedFrameBitmap != null && kotlin.math.abs(localTimeUs - layer.cachedFrameTimeUs) < VIDEO_FRAME_CACHE_THRESHOLD_US) {
+                            layer.cachedFrameBitmap
+                        } else {
+                            if (layer.cachedFrameBitmap == null) {
+                                layer.cachedFrameBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            }
+                            val outBmp = layer.cachedFrameBitmap!!
+                            val decoded = layer.hardwareDecoder?.decodeNextFrame(localTimeUs, outBmp) ?: false
+                            
+                            val fresh = if (decoded) {
+                                outBmp
+                            } else {
+                                try {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                                        val maxDecodeDim = 1080
+                                        val sVal = minOf(1.0, maxDecodeDim.toDouble() / maxOf(w, h))
+                                        val decodeW = (w * sVal).toInt().coerceAtLeast(1)
+                                        val decodeH = (h * sVal).toInt().coerceAtLeast(1)
+                                        layer.videoRetriever?.getScaledFrameAtTime(
+                                            localTimeUs,
+                                            android.media.MediaMetadataRetriever.OPTION_CLOSEST,
+                                            decodeW,
+                                            decodeH
+                                        )
+                                    } else {
+                                        layer.videoRetriever?.getFrameAtTime(localTimeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+                                    }
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            if (fresh != null) {
+                                if (fresh != outBmp) {
+                                    layer.cachedFrameBitmap?.recycle()
+                                    layer.cachedFrameBitmap = fresh
+                                } else {
+                                    layer.cachedFrameBitmap = outBmp
+                                }
+                                layer.cachedFrameTimeUs = localTimeUs
+                            }
+                            layer.cachedFrameBitmap
+                        }
+                    } else {
+                        layer.imageBitmap
+                    }
+                    if (frameBitmap == null) continue
+
+                    val transform = getActiveTransform(layer.layerId, timeSec, layerTransforms, layerKeyframes)
+                    val opacity = getActiveOpacity(layer.layerId, timeSec, layerOpacities, opacityKeyframes)
+
+                    val maxW = w.toFloat()
+                    val maxH = h.toFloat()
+                    val baseScale = minOf(maxW / frameBitmap.width, maxH / frameBitmap.height)
+
+                    nativeLayers.add(
+                        com.example.render.RenderLayer(
+                            bitmap = frameBitmap,
+                            opacity = opacity,
+                            offsetX = transform.offsetX * scaleFactor,
+                            offsetY = transform.offsetY * scaleFactor,
+                            rotationDegrees = transform.rotation,
+                            scaleX = transform.scaleX * baseScale,
+                            scaleY = transform.scaleY * baseScale
+                        )
+                    )
+                }
+
+                // Collect Shape Layers
+                for ((layerId, shapeBmp) in shapeLayers) {
+                    if (deletedLayers.contains(layerId) || hiddenLayers.contains(layerId)) continue
+                    val startTime = layerStartTimes[layerId] ?: 0f
+                    val endTime = layerEndTimes[layerId] ?: Float.MAX_VALUE
+                    if (timeSec < startTime || timeSec > endTime) continue
+
+                    val transform = getActiveTransform(layerId, timeSec, layerTransforms, layerKeyframes)
+                    val opacity = getActiveOpacity(layerId, timeSec, layerOpacities, opacityKeyframes)
+
+                    nativeLayers.add(
+                        com.example.render.RenderLayer(
+                            bitmap = shapeBmp,
+                            opacity = opacity,
+                            offsetX = transform.offsetX * scaleFactor,
+                            offsetY = transform.offsetY * scaleFactor,
+                            rotationDegrees = transform.rotation,
+                            scaleX = transform.scaleX,
+                            scaleY = transform.scaleY
+                        )
+                    )
+                }
+
+                // 3. Composite everything onto the bitmap using the native CPU-multi-threaded engine!
+                NativeRenderer.compositeFrame(bitmap, nativeLayers)
+
+                // 4. Draw Text layers on top (using standard Canvas)
+                drawTextLayers(canvas, w, h, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+            } else {
+                // Fallback to original sequential CPU Canvas path if native is unavailable
+                drawTimelineFrame(canvas, w, h, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
+                drawMediaLayers(canvas, w, h, timeSec, mediaLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                drawShapeLayers(canvas, w, h, timeSec, shapeLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                drawTextLayers(canvas, w, h, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+            }
+
+            // Save to external storage as PNG
+            val filename = "frame_${System.currentTimeMillis()}.png"
+            val tempFile = java.io.File(context.cacheDir, filename)
+            java.io.FileOutputStream(tempFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+
+            // Move to MediaStore Pictures gallery
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/MotionStudio")
+                }
+            }
+
+            val uri = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                }
+            }
+
+            bitmap.recycle()
+            mediaLayers.forEach { layer ->
+                layer.imageBitmap?.recycle()
+                layer.cachedFrameBitmap?.recycle()
+                try { layer.hardwareDecoder?.release() } catch (e: Exception) {}
+                try { layer.videoRetriever?.release() } catch (e: Exception) {}
+            }
+            shapeLayers.forEach { (_, bitmap) -> bitmap.recycle() }
+
+            Pair(uri, tempFile.absolutePath)
+        } catch (e: Exception) {
+            Log.e("VideoRenderer", "Failed to render single frame as PNG", e)
+            Pair(null, null)
+        }
+    }
+
+    suspend fun renderAndSaveGif(
+        context: Context,
+        resolution: String,
+        aspectRatio: String,
+        backgroundStr: String,
+        vectorPoints: List<Offset>,
+        pointModes: List<Boolean>,
+        layerColors: Map<String, Color>,
+        defaultLayerCount: Map<String, Int>,
+        addedMedia: List<Uri> = emptyList(),
+        addedShapes: List<androidx.compose.ui.graphics.vector.ImageVector?> = emptyList(),
+        addedTexts: List<String> = emptyList(),
+        layerTexts: Map<String, String> = emptyMap(),
+        deletedLayers: List<String> = emptyList(),
+        hiddenLayers: List<String> = emptyList(),
+        layerStartTimes: Map<String, Float> = emptyMap(),
+        layerEndTimes: Map<String, Float> = emptyMap(),
+        layerTransforms: Map<String, LayerTransform> = emptyMap(),
+        layerKeyframes: Map<String, List<LayerKeyframe>> = emptyMap(),
+        opacityKeyframes: Map<String, List<OpacityKeyframe>> = emptyMap(),
+        layerOpacities: Map<String, Float> = emptyMap(),
+        layerBlendModes: Map<String, String> = emptyMap(),
+        layerEffects: Map<String, List<AppliedEffect>> = emptyMap(),
+        previewWidthPx: Float = 1f,
+        previewHeightPx: Float = 1f,
+        timelineDurationSeconds: Float = 4.0f,
+        onProgress: (Float) -> Unit
+    ): Pair<Uri?, String?> = withContext(Dispatchers.IO) {
+        try {
+            // For GIFs, use a slightly lower resolution (max 480p) to keep size and memory low
+            val (w, h) = when {
+                aspectRatio == "9:16" -> Pair(360, 640)
+                else -> Pair(640, 360)
+            }
+
+            val fps = 10 // 10 fps is perfect for mobile animated GIFs
+            val totalFrames = (timelineDurationSeconds * fps).toInt().coerceAtLeast(1)
+
+            val tempFile = java.io.File(context.cacheDir, "export_${System.currentTimeMillis()}.gif")
+            val outputStream = java.io.FileOutputStream(tempFile)
+
+            val encoder = AnimatedGifEncoder()
+            encoder.start(outputStream)
+            encoder.setDelay(1000 / fps) // Delay in milliseconds
+            encoder.setRepeat(0) // Infinite loop
+
+            val mediaLayers = addedMedia.mapIndexed { index, uri ->
+                val layerId = "Media ${index + 1}"
+                val mimeType = try { context.contentResolver.getType(uri) } catch (e: Exception) { null }
+                val isVideo = mimeType?.startsWith("video/") == true
+                ExportMediaLayer(
+                    layerId = layerId,
+                    uri = uri,
+                    isVideo = isVideo,
+                    imageBitmap = if (!isVideo) decodeBitmapFromUri(context, uri) else null,
+                    videoRetriever = if (isVideo) android.media.MediaMetadataRetriever().apply {
+                        try { setDataSource(context, uri) } catch (e: Exception) { Log.e("VideoRenderer", "Failed to open video for export", e) }
+                    } else null,
+                    hardwareDecoder = if (isVideo) {
+                        try { com.example.render.MediaCodecVideoDecoder(context, uri, w, h) } catch (e: Exception) { null }
+                    } else null
+                )
+            }
+
+            val shapeSizePx = (minOf(w, h) * 0.3f).toInt().coerceAtLeast(1)
+            val shapeLayers = addedShapes.mapIndexedNotNull { index, icon ->
+                if (icon == null) return@mapIndexedNotNull null
+                val layerId = "Shape ${index + 1}"
+                val tintColor = layerColors[layerId]?.let {
+                    AndroidColor.argb((it.alpha * 255).toInt(), (it.red * 255).toInt(), (it.green * 255).toInt(), (it.blue * 255).toInt())
+                } ?: AndroidColor.rgb(22, 185, 150)
+                val bitmap = renderImageVectorToBitmap(icon, shapeSizePx, tintColor)
+                if (bitmap != null) layerId to bitmap else null
+            }
+
+            val frameBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(frameBitmap)
+
+            for (frameIndex in 0 until totalFrames) {
+                val timeSec = frameIndex.toFloat() / fps
+                canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+                val scaleFactor = if (previewWidthPx > 0f) w / previewWidthPx else 1f
+
+                if (NativeRenderer.isAvailable) {
+                    // 1. Draw Background and Vector Drawings
+                    drawTimelineFrame(canvas, w, h, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
+
+                    // 2. Collect active Media & Shape layers
+                    val nativeLayers = mutableListOf<com.example.render.RenderLayer>()
+
+                    // Collect Media Layers
+                    for (layer in mediaLayers) {
+                        if (deletedLayers.contains(layer.layerId) || hiddenLayers.contains(layer.layerId)) continue
+                        val startTime = layerStartTimes[layer.layerId] ?: 0f
+                        val endTime = layerEndTimes[layer.layerId] ?: Float.MAX_VALUE
+                        if (timeSec < startTime || timeSec > endTime) continue
+
+                        val frameBitmap = if (layer.isVideo) {
+                            val localTimeUs = ((timeSec - startTime).coerceAtLeast(0f) * 1_000_000L).toLong()
+                            if (layer.cachedFrameBitmap != null && kotlin.math.abs(localTimeUs - layer.cachedFrameTimeUs) < VIDEO_FRAME_CACHE_THRESHOLD_US) {
+                                layer.cachedFrameBitmap
+                            } else {
+                                if (layer.cachedFrameBitmap == null) {
+                                    layer.cachedFrameBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                                }
+                                val outBmp = layer.cachedFrameBitmap!!
+                                val decoded = layer.hardwareDecoder?.decodeNextFrame(localTimeUs, outBmp) ?: false
+                                
+                                val fresh = if (decoded) {
+                                    outBmp
+                                } else {
+                                    try {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                                            val maxDecodeDim = 1080
+                                            val sVal = minOf(1.0, maxDecodeDim.toDouble() / maxOf(w, h))
+                                            val decodeW = (w * sVal).toInt().coerceAtLeast(1)
+                                            val decodeH = (h * sVal).toInt().coerceAtLeast(1)
+                                            layer.videoRetriever?.getScaledFrameAtTime(
+                                                localTimeUs,
+                                                android.media.MediaMetadataRetriever.OPTION_CLOSEST,
+                                                decodeW,
+                                                decodeH
+                                            )
+                                        } else {
+                                            layer.videoRetriever?.getFrameAtTime(localTimeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+                                        }
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                }
+                                if (fresh != null) {
+                                    if (fresh != outBmp) {
+                                        layer.cachedFrameBitmap?.recycle()
+                                        layer.cachedFrameBitmap = fresh
+                                    } else {
+                                        layer.cachedFrameBitmap = outBmp
+                                    }
+                                    layer.cachedFrameTimeUs = localTimeUs
+                                }
+                                layer.cachedFrameBitmap
+                            }
+                        } else {
+                            layer.imageBitmap
+                        }
+                        if (frameBitmap == null) continue
+
+                        val transform = getActiveTransform(layer.layerId, timeSec, layerTransforms, layerKeyframes)
+                        val opacity = getActiveOpacity(layer.layerId, timeSec, layerOpacities, opacityKeyframes)
+
+                        val maxW = w.toFloat()
+                        val maxH = h.toFloat()
+                        val baseScale = minOf(maxW / frameBitmap.width, maxH / frameBitmap.height)
+
+                        nativeLayers.add(
+                            com.example.render.RenderLayer(
+                                bitmap = frameBitmap,
+                                opacity = opacity,
+                                offsetX = transform.offsetX * scaleFactor,
+                                offsetY = transform.offsetY * scaleFactor,
+                                rotationDegrees = transform.rotation,
+                                scaleX = transform.scaleX * baseScale,
+                                scaleY = transform.scaleY * baseScale
+                            )
+                        )
+                    }
+
+                    // Collect Shape Layers
+                    for ((layerId, shapeBmp) in shapeLayers) {
+                        if (deletedLayers.contains(layerId) || hiddenLayers.contains(layerId)) continue
+                        val startTime = layerStartTimes[layerId] ?: 0f
+                        val endTime = layerEndTimes[layerId] ?: Float.MAX_VALUE
+                        if (timeSec < startTime || timeSec > endTime) continue
+
+                        val transform = getActiveTransform(layerId, timeSec, layerTransforms, layerKeyframes)
+                        val opacity = getActiveOpacity(layerId, timeSec, layerOpacities, opacityKeyframes)
+
+                        nativeLayers.add(
+                            com.example.render.RenderLayer(
+                                bitmap = shapeBmp,
+                                opacity = opacity,
+                                offsetX = transform.offsetX * scaleFactor,
+                                offsetY = transform.offsetY * scaleFactor,
+                                rotationDegrees = transform.rotation,
+                                scaleX = transform.scaleX,
+                                scaleY = transform.scaleY
+                            )
+                        )
+                    }
+
+                    // 3. Composite everything onto the bitmap using the native CPU-multi-threaded engine!
+                    NativeRenderer.compositeFrame(frameBitmap, nativeLayers)
+
+                    // 4. Draw Text layers on top (using standard Canvas)
+                    drawTextLayers(canvas, w, h, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                } else {
+                    // Fallback to original sequential CPU Canvas path if native is unavailable
+                    drawTimelineFrame(canvas, w, h, timeSec, backgroundStr, vectorPoints, pointModes, layerColors, defaultLayerCount)
+                    drawMediaLayers(canvas, w, h, timeSec, mediaLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                    drawShapeLayers(canvas, w, h, timeSec, shapeLayers, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                    drawTextLayers(canvas, w, h, timeSec, addedTexts, layerTexts, layerColors, deletedLayers, hiddenLayers, layerStartTimes, layerEndTimes, layerTransforms, layerKeyframes, opacityKeyframes, layerOpacities, layerBlendModes, previewWidthPx, previewHeightPx)
+                }
+
+                encoder.addFrame(frameBitmap)
+                onProgress(frameIndex.toFloat() / totalFrames)
+            }
+
+            encoder.finish()
+            frameBitmap.recycle()
+
+            mediaLayers.forEach { layer ->
+                layer.imageBitmap?.recycle()
+                layer.cachedFrameBitmap?.recycle()
+                try { layer.hardwareDecoder?.release() } catch (e: Exception) {}
+                try { layer.videoRetriever?.release() } catch (e: Exception) {}
+            }
+            shapeLayers.forEach { (_, bitmap) -> bitmap.recycle() }
+
+            // Move final GIF to MediaStore Movies / Pictures gallery
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "animated_${System.currentTimeMillis()}.gif")
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/gif")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/MotionStudio")
+                }
+            }
+
+            val uri = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                context.contentResolver.openOutputStream(uri)?.use { outStream ->
+                    java.io.FileInputStream(tempFile).use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+            }
+
+            Pair(uri, tempFile.absolutePath)
+        } catch (e: Exception) {
+            Log.e("VideoRenderer", "Failed to render and save animated GIF", e)
+            Pair(null, null)
         }
     }
 

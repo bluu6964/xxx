@@ -308,10 +308,17 @@ fun MotionStudioTimelineEditor() {
             } else if (viewModel.selectedLayer == null) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                 Spacer(Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("New Project 3", color = Color.White, fontSize = 16.sp, maxLines = 1)
-                    Spacer(Modifier.height(4.dp))
-                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Motion Studio Project", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
                 }
                 Spacer(Modifier.width(16.dp))
                 Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", tint = if (viewModel.undoStack.isNotEmpty()) Color.White else Color.White.copy(alpha=0.3f), modifier = Modifier.size(20.dp).clickable(enabled = viewModel.undoStack.isNotEmpty()) { viewModel.performUndo(context) })
@@ -329,10 +336,24 @@ fun MotionStudioTimelineEditor() {
                 Icon(Icons.Default.IosShare, contentDescription = "Export", tint = if (hasLayersTop) Color.White else Color.White.copy(alpha=0.3f), modifier = Modifier.size(20.dp).clickable(enabled = hasLayersTop) { viewModel.showExport = true })
             } else {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White, modifier = Modifier.clickable { viewModel.selectedLayer = null; viewModel.inMoveTransform = false; viewModel.inColorFill = false; viewModel.inBlendingOpacity = false }.padding(end=16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                     Text(viewModel.selectedLayer ?: "", color = Color.White, fontSize = 14.sp, maxLines = 1)
-                     Spacer(Modifier.height(4.dp))
-                     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha=0.3f)))
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFF16B996).copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                            .border(1.dp, Color(0xFF16B996), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            viewModel.selectedLayer ?: "",
+                            color = Color(0xFF16B996),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
                 }
                 Spacer(Modifier.width(16.dp))
                 Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", tint = if (viewModel.undoStack.isNotEmpty()) Color.White else Color.White.copy(alpha=0.3f), modifier = Modifier.size(20.dp).clickable(enabled = viewModel.undoStack.isNotEmpty()) { viewModel.performUndo(context) })
@@ -407,20 +428,81 @@ fun MotionStudioTimelineEditor() {
         com.example.ui.canvas.CanvasArea(viewModel, modifier = Modifier.weight(1f))
         // Toolbar controls below canvas
         Row(
-            modifier = Modifier.fillMaxWidth().height(48.dp).background(Color(0xFF1B1D25)),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .background(Color(0xFF1B1D25))
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.SkipPrevious, null, tint = Color.White, modifier = Modifier.size(24.dp).clickable { viewModel.playheadProgress = 0f; viewModel.isPlaying = false })
-            Icon(
-                if (viewModel.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, 
-                null, 
-                tint = if (hasLayers) Color.White else Color.White.copy(alpha = 0.3f), 
-                modifier = Modifier.size(28.dp).clickable(enabled = hasLayers) { viewModel.isPlaying = !viewModel.isPlaying }
-            )
-            Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(24.dp).clickable { viewModel.playheadProgress = viewModel.timelineDurationSeconds; viewModel.isPlaying = false })
-            Icon(Icons.Default.LibraryAdd, null, tint = Color.White, modifier = Modifier.size(20.dp).clickable { viewModel.showAddMenu = true })
-            Icon(Icons.Default.CropFree, null, tint = Color.White, modifier = Modifier.size(20.dp).clickable { viewModel.selectedAspectRatio = if (viewModel.selectedAspectRatio == "9:16") "16:9" else if (viewModel.selectedAspectRatio == "16:9") "1:1" else "9:16" })
+            // Left block: Navigation & Playback Controls
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    Icons.Default.SkipPrevious,
+                    null,
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp).clickable { viewModel.playheadProgress = 0f; viewModel.isPlaying = false }
+                )
+                
+                // Play/Pause circular accent button
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(if (hasLayers) Color(0xFF16B996) else Color.White.copy(alpha = 0.12f), CircleShape)
+                        .clickable(enabled = hasLayers) { viewModel.isPlaying = !viewModel.isPlaying },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (viewModel.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        null,
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                Icon(
+                    Icons.Default.SkipNext,
+                    null,
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp).clickable { viewModel.playheadProgress = viewModel.timelineDurationSeconds; viewModel.isPlaying = false }
+                )
+            }
+
+            // Right block: Action Pills (Add Elements & Aspect Ratio Selection)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Add button pill
+                Row(
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                        .clickable { viewModel.showAddMenu = true }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                // Aspect ratio selector pill
+                Row(
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                        .clickable { viewModel.selectedAspectRatio = if (viewModel.selectedAspectRatio == "9:16") "16:9" else if (viewModel.selectedAspectRatio == "16:9") "1:1" else "9:16" }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.CropFree, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(viewModel.selectedAspectRatio, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
         
         // Timeline zoom controls — pinch-to-zoom works directly on the
@@ -509,6 +591,7 @@ fun MotionStudioTimelineEditor() {
             previewWidthPx = viewModel.previewWidthPx,
             previewHeightPx = viewModel.previewHeightPx,
             timelineDurationSeconds = viewModel.timelineDurationSeconds,
+            playheadProgress = viewModel.playheadProgress,
             onClose = { viewModel.showExport = false }
         )
     }
