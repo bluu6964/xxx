@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include <string>
 #include <cstring>
+#include <vector>
 #include "video_export_engine.h"
 #include "native_compositor.h"
 #include "yuv_convert.h"

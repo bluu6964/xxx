@@ -15,7 +15,7 @@ struct ExportConfig {
     int width = 1920;
     int height = 1080;
     int frameRate = 30;
-    int bitrate = 50_000_000;
+    int bitrate = 50000000;
     int iframeInterval = 1;
     int totalFrames = 30;
 };
