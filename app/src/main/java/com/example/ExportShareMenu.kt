@@ -76,39 +76,10 @@ fun ExportShareMenu(
         if (isExporting) {
             exportProgress = 0f
             if (selectedFormat == "Video") {
-                val (uri, path) = VideoRenderer.renderAndSaveVideo(
-                    context = context,
-                    resolution = selectedResolution,
-                    aspectRatio = selectedAspectRatio,
-                    frameRateStr = selectedFrameRate,
-                    backgroundStr = selectedBackground,
-                    vectorPoints = vectorPoints,
-                    pointModes = pointModes,
-                    layerColors = layerColors,
-                    defaultLayerCount = defaultLayerCount,
-                    addedMedia = addedMedia,
-                    addedShapes = addedShapes,
-                    addedTexts = addedTexts,
-                    layerTexts = layerTexts,
-                    deletedLayers = deletedLayers,
-                    hiddenLayers = hiddenLayers,
-                    layerStartTimes = layerStartTimes,
-                    layerEndTimes = layerEndTimes,
-                    layerTransforms = layerTransforms,
-                    layerKeyframes = layerKeyframes,
-                    opacityKeyframes = opacityKeyframes,
-                    layerOpacities = layerOpacities,
-                    layerBlendModes = layerBlendModes,
-                    layerEffects = layerEffects,
-                    previewWidthPx = previewWidthPx,
-                    previewHeightPx = previewHeightPx,
-                    timelineDurationSeconds = timelineDurationSeconds,
-                    onProgress = { progress ->
-                        exportProgress = progress
-                    }
-                )
-                savedVideoUri = uri
-                savedFilePath = path
+                // Export engine removed — clean state (previously VideoRenderer.renderAndSaveVideo)
+                Toast.makeText(context, "Export feature not available (engine removed)", Toast.LENGTH_LONG).show()
+                savedVideoUri = null
+                savedFilePath = null
             } else {
                 while (exportProgress < 1.0f) {
                     delay(80)

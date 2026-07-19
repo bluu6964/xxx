@@ -92,17 +92,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Smoke test — confirms the native (C++) renderer library loaded
-        // and the JNI bridge resolves correctly. VideoRenderer.kt's export
-        // path now uses NativeRenderer.nativeBitmapToYuv420 when this is
-        // available, falling back to its own Kotlin conversion per-frame
-        // otherwise (see VideoRenderer.renderAndSaveVideo). Layer
-        // compositing (NativeRenderer.compositeFrame) is not wired in yet.
-        if (com.example.render.NativeRenderer.isAvailable) {
-            android.util.Log.i("NativeRenderer", "Loaded: ${com.example.render.NativeRenderer.nativeEngineVersion()}")
-        } else {
-            android.util.Log.w("NativeRenderer", "Native renderer unavailable, falling back to Kotlin renderer", com.example.render.NativeRenderer.loadFailureReason())
-        }
+        // Render engine removed — clean state.
+        android.util.Log.i("App", "Running clean on main branch without native engine")
 
         setContent {
             MotionStudioTheme {
@@ -192,7 +183,7 @@ fun getMediaDurationSecondsOrNull(context: android.content.Context, uri: android
 }
 
 // Parses a frame-rate label like "30 fps" into its numeric value.
-// Mirrors the parsing used in VideoRenderer.kt so the on-screen timecode
+// Clean state: no external video renderer dependency.
 // (playhead frame counter) matches the frame rate the user picked in
 // Project Settings, instead of always assuming 30fps.
 fun parseFrameRate(frameRateStr: String): Int = when {
